@@ -155,7 +155,7 @@ def _find_top_image(doc: html.HtmlElement, base_url: str) -> Optional[str]:
 
 
 def extract_article(url: str, timeout: int = 30) -> ExtractedArticle:
-    """Extract article content from URL using newspaper3k."""
+    """Extract article content from URL using newspaper4k."""
     config = Config()
     config.request_timeout = timeout
     config.browser_user_agent = (

@@ -95,7 +95,7 @@ def _download_article_images(article, no_images: bool, max_images: int, verbose:
         article: Extracted article object
         no_images: Whether to skip image download
         max_images: Maximum number of images to download
-        verbose: Whether to show progress
+        verbose: Whether to show detailed output (disables progress bars)
 
     Returns:
         Tuple of (top_image, images_list)
@@ -106,23 +106,30 @@ def _download_article_images(article, no_images: bool, max_images: int, verbose:
     if no_images:
         return top_image, images
 
+    show_progress = not verbose  # Прогресс-бары только когда НЕ verbose
+
     if article.top_image:
-        if verbose:
-            click.echo("Downloading top image...")
-        top_image = download_top_image(article.top_image, verbose=verbose)
+        top_image = download_top_image(
+            article.top_image,
+            verbose=verbose,
+            show_progress=show_progress
+        )
 
     if article.images:
-        if verbose:
-            click.echo("Downloading article images...")
         skip_urls = {article.top_image} if article.top_image else set()
         images = download_images(
             article.images,
             max_images=max_images,
             verbose=verbose,
             skip_urls=skip_urls,
+            show_progress=show_progress
         )
 
-    if verbose:
+    # Итоговое сообщение
+    if not verbose:
+        total = len(images) + (1 if top_image else 0)
+        click.echo(f"Downloaded {total} image(s)")
+    elif verbose:
         click.echo(f"Downloaded {len(images)} images" + (" + top image" if top_image else ""))
 
     return top_image, images
@@ -198,26 +205,35 @@ def main(
     _show_font_info(font, verbose)
 
     # Extract article
+    if not verbose:
+        click.echo("Extracting article...")
+
     try:
         article = extract_article(url)
     except Exception as e:
         raise click.ClickException(f"Failed to extract article: {e}")
 
-    # Show article information
-    _show_article_info(article, url, verbose)
+    # Show article information (только если verbose или для краткой информации)
+    if not verbose:
+        click.echo(f"Extracted: {article.title}")
+    else:
+        _show_article_info(article, url, verbose)
 
     # Download images
     top_image, images = _download_article_images(article, no_images, max_images, verbose)
     all_images = ([top_image] if top_image else []) + images
 
     # Generate PDF
+    if not verbose:
+        click.echo("Generating PDF...")
+
     try:
         if verbose:
             click.echo(f"Generating PDF: {output}")
         generate_pdf(
             article, all_images, output, custom_title=title, font_family=font
         )
-        click.echo(f"Saved: {output}")
+        click.echo(f"✓ Saved: {output}")
     finally:
         cleanup_images(all_images)
 

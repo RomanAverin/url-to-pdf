@@ -5,6 +5,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
+import click
 import requests
 from PIL import Image
 
@@ -114,12 +115,16 @@ def filter_image(img: DownloadedImage) -> bool:
 def download_top_image(
     url: str,
     verbose: bool = False,
+    show_progress: bool = True,
 ) -> Optional[DownloadedImage]:
     """Download top image without URL pattern filtering."""
     if not url:
         return None
 
-    if verbose:
+    # Показываем сообщение только если не verbose и show_progress
+    if show_progress and not verbose:
+        click.echo("Downloading top image...")
+    elif verbose:
         print(f"  Downloading top image: {url[:60]}...")
 
     img = download_image(url)
@@ -144,41 +149,60 @@ def download_images(
     max_images: int = 10,
     verbose: bool = False,
     skip_urls: Optional[set[str]] = None,
+    show_progress: bool = True,
 ) -> list[DownloadedImage]:
     """Download and filter images from URLs."""
     downloaded: list[DownloadedImage] = []
     skip_urls = skip_urls or set()
 
-    for url in image_urls:
-        if len(downloaded) >= max_images:
-            break
+    # Фильтруем URL заранее (удаляем ads и skip_urls)
+    urls_to_process = [
+        url for url in image_urls
+        if url not in skip_urls and not is_ad_url(url)
+    ][:max_images * 2]  # Берем с запасом, т.к. некоторые могут не загрузиться
 
-        if url in skip_urls:
-            continue
+    # Выбор режима отображения
+    if show_progress and not verbose:
+        # Режим прогресс-бара
+        with click.progressbar(
+            urls_to_process,
+            label='Downloading images',
+            show_pos=True,
+            item_show_func=lambda url: f"{url[:40]}..." if url else ""
+        ) as progress_bar:
+            for url in progress_bar:
+                if len(downloaded) >= max_images:
+                    break
 
-        if is_ad_url(url):
+                img = download_image(url)
+                if img and filter_image(img):
+                    downloaded.append(img)
+                elif img:
+                    img.path.unlink(missing_ok=True)
+    else:
+        # Режим verbose (текущий код)
+        for url in urls_to_process:
+            if len(downloaded) >= max_images:
+                break
+
             if verbose:
-                print(f"  Skipping ad URL: {url[:60]}...")
-            continue
+                print(f"  Downloading: {url[:60]}...")
 
-        if verbose:
-            print(f"  Downloading: {url[:60]}...")
+            img = download_image(url)
+            if img is None:
+                if verbose:
+                    print("    Failed to download")
+                continue
 
-        img = download_image(url)
-        if img is None:
+            if not filter_image(img):
+                if verbose:
+                    print(f"    Filtered out ({img.width}x{img.height})")
+                img.path.unlink(missing_ok=True)
+                continue
+
             if verbose:
-                print("    Failed to download")
-            continue
-
-        if not filter_image(img):
-            if verbose:
-                print(f"    Filtered out ({img.width}x{img.height})")
-            img.path.unlink(missing_ok=True)
-            continue
-
-        if verbose:
-            print(f"    OK ({img.width}x{img.height})")
-        downloaded.append(img)
+                print(f"    OK ({img.width}x{img.height})")
+            downloaded.append(img)
 
     return downloaded
 
