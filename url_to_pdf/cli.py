@@ -8,6 +8,8 @@ from .pdf_generator import (
     get_default_font,
     get_font_families,
 )
+from .progress import ProgressReporter
+from .state_machine import JobState
 
 
 def _handle_list_fonts() -> None:
@@ -135,6 +137,58 @@ def _download_article_images(article, no_images: bool, max_images: int, verbose:
     return top_image, images
 
 
+def _download_article_images_with_progress(
+    article, no_images: bool, max_images: int, progress_reporter: ProgressReporter
+):
+    """Download article images with progress updates.
+
+    Args:
+        article: Extracted article object
+        no_images: Whether to skip image download
+        max_images: Maximum number of images to download
+        progress_reporter: Progress reporter instance
+
+    Returns:
+        Tuple of (top_image, images_list)
+    """
+    top_image = None
+    images = []
+
+    if no_images:
+        return top_image, images
+
+    # Calculate total images for progress
+    total_images = 0
+    if article.top_image:
+        total_images += 1
+    if article.images:
+        total_images += min(len(article.images), max_images)
+
+    # Callback for image download progress
+    def on_image_downloaded(downloaded: int, total: int):
+        progress_reporter.update_images_progress(downloaded, total)
+
+    # Download top image
+    if article.top_image:
+        top_image = download_top_image(article.top_image, verbose=False, show_progress=False)
+        if top_image:
+            on_image_downloaded(1, total_images)
+
+    # Download other images
+    if article.images:
+        skip_urls = {article.top_image} if article.top_image else set()
+        images = download_images(
+            article.images,
+            max_images=max_images,
+            verbose=False,
+            skip_urls=skip_urls,
+            show_progress=False,
+            progress_callback=on_image_downloaded,
+        )
+
+    return top_image, images
+
+
 @click.command()
 @click.argument("url", required=False)
 @click.option(
@@ -204,38 +258,54 @@ def main(
     # Show font information
     _show_font_info(font, verbose)
 
-    # Extract article
-    if not verbose:
-        click.echo("Extracting article...")
+    all_images = []
 
     try:
-        article = extract_article(url)
-    except Exception as e:
-        raise click.ClickException(f"Failed to extract article: {e}")
+        # Use progress reporter for non-verbose mode
+        if not verbose:
+            with ProgressReporter(url) as progress_reporter:
+                # Stage 1: Extract article
+                progress_reporter.update_state(JobState.EXTRACTING)
+                article = extract_article(url)
 
-    # Show article information (только если verbose или для краткой информации)
-    if not verbose:
-        click.echo(f"Extracted: {article.title}")
-    else:
-        _show_article_info(article, url, verbose)
+                # Stage 2: Download images
+                progress_reporter.update_state(JobState.DOWNLOADING_IMAGES)
+                top_image, images = _download_article_images_with_progress(
+                    article, no_images, max_images, progress_reporter
+                )
+                all_images = ([top_image] if top_image else []) + images
 
-    # Download images
-    top_image, images = _download_article_images(
-        article, no_images, max_images, verbose
-    )
-    all_images = ([top_image] if top_image else []) + images
+                # Stage 3: Generate PDF
+                progress_reporter.update_state(JobState.GENERATING_PDF)
+                generate_pdf(
+                    article, all_images, output, custom_title=title, font_family=font
+                )
 
-    # Generate PDF
-    if not verbose:
-        click.echo("Generating PDF...")
+                # Stage 4: Completed
+                progress_reporter.update_state(JobState.COMPLETED)
 
-    try:
-        if verbose:
+            click.echo(f"✓ Saved: {output}")
+        else:
+            # Verbose mode: use old behavior
+            article = extract_article(url)
+            _show_article_info(article, url, verbose)
+
+            # Download images
+            top_image, images = _download_article_images(
+                article, no_images, max_images, verbose
+            )
+            all_images = ([top_image] if top_image else []) + images
+
+            # Generate PDF
             click.echo(f"Generating PDF: {output}")
-        generate_pdf(article, all_images, output, custom_title=title, font_family=font)
-        click.echo(f"✓ Saved: {output}")
+            generate_pdf(article, all_images, output, custom_title=title, font_family=font)
+            click.echo(f"✓ Saved: {output}")
+
+    except Exception as e:
+        raise click.ClickException(f"Failed: {e}")
     finally:
-        cleanup_images(all_images)
+        if all_images:
+            cleanup_images(all_images)
 
 
 if __name__ == "__main__":

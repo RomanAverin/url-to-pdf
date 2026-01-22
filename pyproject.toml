@@ -18,6 +18,7 @@ dependencies = [
   "Pillow>=9.0.0",
   "lxml>=4.9.0",
   "lxml_html_clean>=0.1.0",
+  "rich>=13.0.0",
 ]
 
 [project.scripts]

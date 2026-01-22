@@ -3,7 +3,7 @@ import tempfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 import click
 import requests
@@ -150,8 +150,21 @@ def download_images(
     verbose: bool = False,
     skip_urls: Optional[set[str]] = None,
     show_progress: bool = True,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> list[DownloadedImage]:
-    """Download and filter images from URLs."""
+    """Download and filter images from URLs.
+
+    Args:
+        image_urls: List of image URLs to download
+        max_images: Maximum number of images to download
+        verbose: Enable verbose output
+        skip_urls: Set of URLs to skip
+        show_progress: Show progress bar (click.progressbar)
+        progress_callback: Callback function for progress updates (downloaded, total)
+
+    Returns:
+        List of successfully downloaded images
+    """
     downloaded: list[DownloadedImage] = []
     skip_urls = skip_urls or set()
 
@@ -160,9 +173,23 @@ def download_images(
         url for url in image_urls if url not in skip_urls and not is_ad_url(url)
     ][: max_images * 2]  # Берем с запасом, т.к. некоторые могут не загрузиться
 
-    # Выбор режима отображения
-    if show_progress and not verbose:
-        # Режим прогресс-бара
+    total_to_process = min(len(urls_to_process), max_images)
+
+    # Режим с progress_callback (для rich)
+    if progress_callback:
+        for url in urls_to_process:
+            if len(downloaded) >= max_images:
+                break
+
+            img = download_image(url)
+            if img and filter_image(img):
+                downloaded.append(img)
+                progress_callback(len(downloaded), total_to_process)
+            elif img:
+                img.path.unlink(missing_ok=True)
+
+    # Режим прогресс-бара (существующий код)
+    elif show_progress and not verbose:
         with click.progressbar(
             urls_to_process,
             label="Downloading images",
@@ -178,8 +205,9 @@ def download_images(
                     downloaded.append(img)
                 elif img:
                     img.path.unlink(missing_ok=True)
+
+    # Режим verbose (существующий код)
     else:
-        # Режим verbose (текущий код)
         for url in urls_to_process:
             if len(downloaded) >= max_images:
                 break
