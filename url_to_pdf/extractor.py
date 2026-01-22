@@ -163,7 +163,7 @@ def extract_article(url: str, timeout: int = 30) -> ExtractedArticle:
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
-    article = Article(url, language="ru", config=config)
+    article = Article(url, config=config)
     article.download()
     article.parse()
 
